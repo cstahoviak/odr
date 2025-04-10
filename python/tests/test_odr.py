@@ -17,7 +17,7 @@ def test_odr_linear(rng):
     """
     # Define the linear model and known noise parameters
     m, b = rng.integers(low=1, high=10, size=2, endpoint=True)
-    std_x, std_y = 0.5, 1
+    std_x, std_y = 1, 1.5
     model = LinearModel2D(m, b, std_x, std_y)
 
     # Generate the "truth" dataset
@@ -33,22 +33,29 @@ def test_odr_linear(rng):
     # Fit the model parameters via OLS and compute the error
     ols_param_vec, ols_residuals = model.fit(x_noisy, y_noisy)
     m_ols, b_ols = ols_param_vec
-    sqerr_m_ols = (m_ols - m) ** 2
-    sqerr_b_ols = (b_ols - b) ** 2
-    sqerr_total_ols = sqerr_m_ols + sqerr_b_ols
+    err_m_ols = np.abs(m_ols - m)
+    err_b_ols = np.abs(b_ols - b)
+    err_total_ols = err_m_ols + err_b_ols
 
-    # Define the initial guess for ODR by adding noise to the truth values
-    beta0 = np.array([m, b]) + rng.normal(loc=0, scale=2, size=2)
+    # Define a relatively poor initial guess
+    beta0 = np.ones(2)
 
     # Fit the model parameters via ODR
-    odr = OrthogonalDistanceRegression(model)
+    odr = OrthogonalDistanceRegression(model, converge_thres=1e-4)
     # TODO: Update the ODR class to meet the new Model interface
-    odr.odr(x_noisy, beta0, np.ones_like(y_noisy), get_covar=False)
+    odr.odr(x=x_noisy,
+            y=y_noisy,
+            beta0=beta0,
+            weights=np.ones_like(y_noisy))
     m_odr, b_odr = odr.param_vec_
+    err_m_odr = np.abs(m_odr - m)
+    err_b_odr = np.abs(b_odr - b)
+    err_total_odr = err_m_odr + err_b_odr
 
     # Validate that ODR is a better estimate of the true model parameters
-
-    pass
+    np.testing.assert_array_less(err_m_odr, err_m_ols)
+    np.testing.assert_array_less(err_b_odr, err_b_ols)
+    np.testing.assert_array_less(err_total_odr, err_total_ols)
 
 def test_odr_polynomial():
     """

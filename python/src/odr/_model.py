@@ -2,7 +2,7 @@
 Defines the Model class - an abstract base class for use with the ODR class.
 """
 from abc import  ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
@@ -16,7 +16,9 @@ class Model(ABC):
     that is designed to inherit from sklearn.base.BaseEstimator and
     sklearn.base.RegressorMixin.
     """
-    def __init__(self, min_pts: int, std_x: np.ndarray, std_y: float):
+    def __init__(self, min_pts: int,
+                 std_x: Union[float, np.ndarray],
+                 std_y: float):
         # Store the minimum number of observations required to fit the model.
         self._min_pts = min_pts
 
@@ -53,21 +55,22 @@ class Model(ABC):
         return self._d
 
     @abstractmethod
-    def fit(self, X, y) -> Tuple[np.ndarray, np.ndarray]:
+    def fit(self, x: np.ndarray, y: np.ndarray) -> \
+            Tuple[np.ndarray, np.ndarray]:
         """Returns the model parameters and residual vector."""
         pass
 
     @abstractmethod
     def predict(self,
-                X: np.ndarray,
+                x: np.ndarray,
                 beta: Optional[np.ndarray] = None,
                 delta: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Returns the predicted y values, i.e. y = f(x_i + delta_i; beta).
 
         Args:
-            X: The observed "explanatory" variables, shape (n, m).
-            beta: The current estimate of the model parameters, shape (p,)
+            x: The observed "explanatory" variables, shape (n, m).
+            beta: The current estimate of the model parameters, shape (p,).
             delta: The current estimate of the error in each explanatory
                 variable for each datapoint. This is an "interleaved" vector of
                 shape (n*m,), e.g. for a three dimensional explanatory variable
@@ -80,20 +83,65 @@ class Model(ABC):
         """
         pass
 
-    def score(self, X, y) -> np.ndarray:
+    @abstractmethod
+    def jac_beta(self,
+                 x: np.ndarray,
+                 beta: np.ndarray,
+                 delta: np.ndarray) -> np.ndarray:
+        """
+        Returns the Jacobian of the forward model (the model implemented by
+        Model.predict) with respect to the model parameters, beta.
+
+        Args:
+            x: The observed "explanatory" variables, shape (n, m).
+            beta: The current estimate of the model parameters, shape (p,).
+            delta: The current estimate of the error in the observed
+                "explanatory" variables, shape (n*m,).
+
+        Returns:
+            jac_beta: The Jacobian of the forward model with respect to the
+                model parameters, beta, evaluated at the current estimate of
+                beta and delta, shape (n,p)
+        """
+        pass
+
+    @abstractmethod
+    def jac_delta(self,
+                  x: np.ndarray,
+                  beta: np.ndarray,
+                  delta: np.ndarray) -> np.ndarray:
+        """
+        Returns the Jacobian of the forward model (the model implemented by
+        Model.predict) with respect to delta, the error in the "explanatory"
+        variables.
+
+        Args:
+            x: The observed "explanatory" variables, shape (n, m).
+            beta: The current estimate of the model parameters, shape (p,).
+            delta: The current estimate of the error in the observed
+                "explanatory" variables, shape (n*m,).
+
+        Returns:
+            jac_beta: The Jacobian of the forward model with respect to
+                delta, error in the "explanatory" variables, evaluated at the
+                current estimate of beta and delta, shape (n, n*m).
+        """
+        pass
+
+    def score(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Returns the L2-norm by default."""
-        return np.linalg.norm(self.predict(X) - y, ord=2)
+        return np.linalg.norm(self.predict(x) - y, ord=2)
 
 
 class LinearModel2D(Model):
     """
     Defines a linear model in 2 dimensions.
     """
-    def __init__(self, m: float, b: float, std_x: np.ndarray, std_y: float):
+    def __init__(self, m: float, b: float, *args, **kwargs):
         # Call base class init at beginning of subclass init to ensure that the
         # parent class is properly initialized before any subclass-specific
         # initialization occurs.
-        super().__init__(min_pts=2, std_x=std_x, std_y=std_y)
+        super().__init__(2, *args, **kwargs)
 
         # Store the parameters of the model
         self._m = m
@@ -101,23 +149,36 @@ class LinearModel2D(Model):
 
         self.param_vec_ = np.array([m, b])
 
-    def fit(self, X, y) -> Tuple[np.ndarray, np.ndarray]:
+    def fit(self, x: np.ndarray, y: np.ndarray) -> \
+            Tuple[np.ndarray, np.ndarray]:
         # Fit the model parameters via OLS.
-        A = np.vstack([X, np.ones_like(X)]).T
+        A = np.vstack([x, np.ones_like(x)]).T
         ols_result = np.linalg.lstsq(A, y)
         return ols_result[0], ols_result[1]
 
     def predict(self,
-                X: np.ndarray,
+                x: np.ndarray,
                 beta: Optional[np.ndarray] = None,
                 delta: Optional[np.ndarray] = None) -> np.ndarray:
-        if delta:
+        if delta is not None:
             # If provided, add error to explanatory variable X.
-            X = X + delta
+            x = x + delta
 
-        if beta:
+        if beta is not None:
             # If estimated model parameters are given, use them.
-            return beta[0] * X + beta[1]
+            return beta[0] * x + beta[1]
         else:
             # Otherwise use the "true" model parameters.
-            return self._m * X + self._b
+            return self._m * x + self._b
+
+    def jac_beta(self,
+                 x: np.ndarray,
+                 beta: np.ndarray,
+                 delta: np.ndarray) -> np.ndarray:
+        return np.column_stack((x + delta, np.ones_like(x)))
+
+    def jac_delta(self,
+                 x: np.ndarray,
+                 beta: np.ndarray,
+                 delta: np.ndarray) -> np.ndarray:
+        return np.diag(np.full(len(x), beta[0]))
